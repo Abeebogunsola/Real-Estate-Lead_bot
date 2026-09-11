@@ -1,20 +1,23 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: relb-postgres
+  mysql:
+    image: mysql:8.4
+    container_name: relb-mysql
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: real_estate_leads
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: real_estate_leads
+      MYSQL_USER: relb
+      MYSQL_PASSWORD: relbsecret
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-urelb", "-prelbsecret"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 15
+      start_period: 20s
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   backend:
     build:
@@ -24,15 +27,19 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/real_estate_leads
+      DATABASE_URL: mysql+pymysql://relb:relbsecret@mysql:3306/real_estate_leads
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook/lead-process-message
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost:8080,http://frontend:80
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      sh -c "python -c 'from app.db.base import Base, engine; Base.metadata.create_all(bind=engine)' &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   n8n:
     image: n8nio/n8n:latest
@@ -44,22 +51,26 @@ services:
       - N8N_BASIC_AUTH_USER=admin
       - N8N_BASIC_AUTH_PASSWORD=admin
       - GENERIC_TIMEZONE=Africa/Lagos
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/home/node/workflows
+    depends_on:
+      - backend
 
-  # Frontend is typically run with Vite/npm during development.
-  # Uncomment and configure when ready for containerized frontend.
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #   ports:
-  #     - "3000:3000"
-  #   volumes:
-  #     - ./frontend:/app
-  #   depends_on:
-  #     - backend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: relb-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
 
 volumes:
-  postgres_data:
+  mysql_data:
   n8n_data:
