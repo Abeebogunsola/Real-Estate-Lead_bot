@@ -2,201 +2,202 @@
 
 ## PrimeHomes Realty
 
-> An AI-powered real estate lead management system that receives customer enquiries, understands their requirements, qualifies leads, stores customer information, and helps the sales team follow up efficiently.
+AI-powered real estate lead assistant: chat → FastAPI → **n8n** → MySQL → sales-ready leads.
 
 ---
 
-# 1. Project Overview
+## Stack (current)
 
-The **Real Estate Lead Bot** is a digital receptionist and lead qualification system for **PrimeHomes Realty**.
-
-The system is designed to handle incoming customer enquiries automatically instead of requiring a salesperson to manually process every message.
-
-A customer can simply send a message such as:
-
-> "Hi, I'm looking for a 3-bedroom apartment around Lekki. My budget is around ₦80 million."
-
-The system should understand the message, extract the useful information, determine whether additional information is required, qualify the lead, store the information, respond to the customer, and notify the sales team when necessary.
+| Layer | Tech |
+|-------|------|
+| Frontend | React + Vite (blue / off-white UI) |
+| Backend | FastAPI (Python) |
+| Database | **MySQL 8** |
+| Automation | **n8n** (Docker) |
+| Runtime | Docker Compose |
 
 ---
 
-# 2. Main Goal
+## Quick start (Docker)
 
-The main goal is to reduce the amount of manual work required to process real estate enquiries.
-
-The system should help PrimeHomes Realty:
-
-- Respond to customers faster.
-- Capture leads automatically.
-- Reduce forgotten enquiries.
-- Extract useful customer information.
-- Identify valuable leads.
-- Notify sales representatives.
-- Maintain conversation history.
-- Support follow-up.
-- Keep lead information organized.
-
----
-
-# 3. How the System Works
-
-```text
-CUSTOMER
-   ↓
-REACT CUSTOMER INTERFACE
-   ↓
-FASTAPI BACKEND
-   ↓
-N8N WORKFLOW
-   ↓
-AI PROCESSING
-   ↓
-LEAD QUALIFICATION
-   ↓
-POSTGRESQL DATABASE
-   ↓
-SALES TEAM
-   ↓
-FOLLOW-UP
-```
-
----
-
-# 4. Technology Stack
-
-| Layer | Technology | Main Responsibility |
-|---|---|---|
-| Frontend | React | Customer interface and sales dashboard |
-| Backend | FastAPI / Python | API and application logic |
-| Automation | n8n | Workflow orchestration |
-| Database | PostgreSQL | Main source of truth |
-| AI | LLM | Understanding and generating responses |
-| Reporting | Google Sheets | Operational/reporting projection |
-| API Format | REST / JSON | Communication between services |
-
----
-
-# 5. Project Structure
-
-```text
-real-estate-lead-bot/
-│
-├── frontend/                 # React application
-├── backend/                  # FastAPI application
-├── n8n/                      # Workflow definitions
-├── database/                 # Database notes / seeds
-├── tests/                    # Higher-level tests
-├── docs/                     # All specifications
-│   ├── product/
-│   ├── architecture/
-│   ├── api/
-│   ├── ai/
-│   ├── automation/
-│   ├── qualification/
-│   ├── ui/
-│   ├── development/
-│   ├── deployment/
-│   └── testing/
-│
-├── .env.example
-├── .gitignore
-├── docker-compose.yml
-└── README.md
-```
-
----
-
-# 6. Documentation
-
-All detailed specifications live under [`docs/`](docs/README.md).
-
-Key entry points:
-
-- [Task Tracker](docs/TASK.md)
-- [Implementation Log](docs/IMPLEMENTATION.md)
-- [Development Setup](docs/development/DEVELOPMENT_SETUP.md)
-- [System Architecture](docs/architecture/System-Architecture.md)
-- [API Specification](docs/api/API-Specification.md)
-- [Lead Qualification](docs/qualification/LEAD_QUALIFICATION_SPEC.md)
-
----
-
-# 7. Quick Start (Local)
+### 1. Clone & env
 
 ```bash
-# 1. Clone & enter
 git clone https://github.com/Abeebogunsola/Real-Estate-Lead_bot.git
 cd Real-Estate-Lead_bot
 
-# 2. Environment
 cp .env.example .env
+```
 
-# 3. Start Postgres + n8n
-docker compose up -d postgres n8n
+### 2. Start everything
 
-# 4. Backend
-cd backend
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```bash
+docker compose up --build -d
+```
 
-# 5. Frontend (new terminal)
+First start may take a minute while MySQL becomes healthy and tables are created.
+
+### 3. Open the apps
+
+| Service | URL |
+|---------|-----|
+| **Frontend (chat)** | http://localhost:3000 |
+| **Backend API docs** | http://localhost:8000/docs |
+| **Health** | http://localhost:8000/api/v1/health |
+| **n8n** | http://localhost:5678 |
+
+n8n login (default):
+
+- User: `admin`
+- Password: `admin`
+
+### 4. Useful commands
+
+```bash
+# Logs
+docker compose logs -f backend
+docker compose logs -f n8n
+docker compose logs -f mysql
+
+# Restart one service
+docker compose restart backend
+
+# Stop all
+docker compose down
+
+# Stop and wipe DB volume
+docker compose down -v
+```
+
+---
+
+## How the flow works
+
+```text
+Customer (React chat)
+        ↓
+POST /api/v1/chat
+        ↓
+FastAPI stores Lead + Conversation + Message in MySQL
+        ↓
+POST → n8n webhook  (lead-process-message)
+        ↓
+n8n: AI extract → PATCH lead → POST bot-reply
+        ↓
+Frontend polls messages → shows bot reply + lead score
+```
+
+### Backend endpoints for n8n
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `POST` | `/api/v1/chat` | Customer message (also used by UI) |
+| `GET` | `/api/v1/conversations/{id}/messages` | Poll messages |
+| `GET` | `/api/v1/leads/{id}` | Lead details |
+| `PATCH` | `/api/v1/internal/leads/{id}` | n8n updates extracted fields |
+| `POST` | `/api/v1/internal/leads/{id}/qualify` | Recalculate score |
+| `POST` | `/api/v1/internal/bot-reply` | n8n saves bot message |
+
+Inside Docker, n8n must call the backend as **`http://backend:8000`** (not localhost).
+
+---
+
+## Configure n8n workflow
+
+1. Open http://localhost:5678 and log in.
+2. Create a workflow with a **Webhook** node:
+   - Method: `POST`
+   - Path: `lead-process-message`
+3. Set env so FastAPI hits that webhook:
+
+   ```env
+   N8N_WEBHOOK_URL=http://n8n:5678/webhook/lead-process-message
+   ```
+
+   (Already set in `docker-compose.yml` for the backend service.)
+
+4. After AI extraction, add **HTTP Request** nodes:
+
+   **Update lead**
+
+   ```text
+   PATCH http://backend:8000/api/v1/internal/leads/{{ $json.lead_id }}
+   ```
+
+   Body (example):
+
+   ```json
+   {
+     "lead_id": "...",
+     "intent": "BUY",
+     "property_type": "APARTMENT",
+     "bedrooms": 3,
+     "location": "Lekki",
+     "budget_max": 80000000,
+     "currency": "NGN",
+     "timeline": "WITHIN_3_MONTHS"
+   }
+   ```
+
+   FastAPI will **recalculate score + classification** automatically.
+
+   **Save bot reply**
+
+   ```text
+   POST http://backend:8000/api/v1/internal/bot-reply
+   ```
+
+   ```json
+   {
+     "conversation_id": "...",
+     "message_id": "...",
+     "content": "Thanks! I noted a 3-bedroom in Lekki around ₦80M. When are you looking to buy?"
+   }
+   ```
+
+5. Activate the workflow.
+
+More detail: [`n8n/workflows/README.md`](n8n/workflows/README.md).
+
+---
+
+## Test without n8n first
+
+If the n8n webhook is unreachable, the API still returns a **fallback bot message** so you can verify UI + MySQL.
+
+```bash
+curl -s http://localhost:8000/api/v1/health | jq
+
+curl -s -X POST http://localhost:8000/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"I need a 3-bedroom apartment in Lekki around 80 million"}' | jq
+```
+
+---
+
+## Local frontend only (optional)
+
+```bash
 cd frontend
 npm install
 npm run dev
+# http://localhost:5173  (proxies /api → localhost:8000)
 ```
 
-- Backend: http://localhost:8000  (docs at `/docs`)
-- Frontend: http://localhost:5173
-- n8n: http://localhost:5678
+---
+
+## Project layout
+
+```text
+backend/          FastAPI + MySQL models + n8n callbacks
+frontend/         Modern chat UI (blue / off-white)
+n8n/workflows/    Workflow notes for n8n
+docs/             Specs & task tracker
+docker-compose.yml
+```
 
 ---
 
-# 8. Development Principles
+## Docs
 
-> **Use the simplest technology that correctly solves the problem.**
-
-- FastAPI owns application/API logic and business boundaries.
-- n8n owns automation and integrations.
-- AI owns natural-language understanding and generation.
-- PostgreSQL is the single source of truth.
-- React is the user interface only.
-
-Do not introduce microservices, extra databases, or complex infrastructure unless there is a clear need.
-
----
-
-# 9. Current Status
-
-| Area | Status |
-|------|--------|
-| Documentation | 🟢 Complete & reorganized |
-| Project scaffolding | 🟢 Complete |
-| Backend implementation | ⬜ Skeleton only |
-| Frontend implementation | ⬜ Skeleton only |
-| Database models | ⬜ Not started |
-| n8n workflows | ⬜ Not started |
-| AI integration | ⬜ Not started |
-| MVP | ⬜ Not yet |
-
-See [docs/TASK.md](docs/TASK.md) and [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for the detailed tracker.
-
----
-
-# 10. Agentic Development Rules
-
-When using an AI coding assistant:
-
-1. Read the relevant documentation under `docs/` first.
-2. Check `docs/TASK.md` for the current priority.
-3. Implement only the scoped task.
-4. Run relevant tests.
-5. Update `docs/IMPLEMENTATION.md` and `docs/TASK.md`.
-6. Do not invent architecture or add unnecessary technologies.
-
----
-
-# 11. License
-
-See [LICENSE](LICENSE).
+See [`docs/README.md`](docs/README.md) for product, architecture, and qualification rules.
