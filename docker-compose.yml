@@ -12,24 +12,24 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-urelb", "-prelbsecret"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootsecret"]
       interval: 5s
       timeout: 5s
-      retries: 15
-      start_period: 20s
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+      retries: 30
+      start_period: 30s
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: relb-backend
-    env_file:
-      - .env
     environment:
       DATABASE_URL: mysql+pymysql://relb:relbsecret@mysql:3306/real_estate_leads
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/lead-process-message
-      CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost:8080,http://frontend:80
+      N8N_WEBHOOK_SECRET: change-me-n8n-secret
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost:8080
+      APP_DEBUG: "true"
     ports:
       - "8000:8000"
     volumes:
@@ -38,8 +38,9 @@ services:
       mysql:
         condition: service_healthy
     command: >
-      sh -c "python -c 'from app.db.base import Base, engine; Base.metadata.create_all(bind=engine)' &&
+      sh -c "python -c 'from app.db.base import Base, engine; from app.models import Lead, Conversation, Message; Base.metadata.create_all(bind=engine); print(\"DB tables ready\")' &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
 
   n8n:
     image: n8nio/n8n:latest
@@ -52,7 +53,7 @@ services:
       - N8N_BASIC_AUTH_PASSWORD=admin
       - GENERIC_TIMEZONE=Africa/Lagos
       - WEBHOOK_URL=http://localhost:5678/
-      - N8N_HOST=localhost
+      - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
     volumes:
@@ -60,6 +61,7 @@ services:
       - ./n8n/workflows:/home/node/workflows
     depends_on:
       - backend
+    restart: unless-stopped
 
   frontend:
     build:
@@ -70,6 +72,7 @@ services:
       - "3000:80"
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
   mysql_data:
