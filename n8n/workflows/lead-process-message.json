@@ -1,0 +1,124 @@
+{
+  "name": "PRH Lead Process Message",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-process-message",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lead-process-message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst content = (body.content || '').toLowerCase();\nconst leadId = body.lead_id;\nconst conversationId = body.conversation_id;\nconst messageId = body.message_id;\n\nif (!leadId || !conversationId || !content) {\n  throw new Error('Missing lead_id, conversation_id or content');\n}\n\n// Simple rule-based extraction (replace with OpenAI / LLM node later)\nlet intent = null;\nif (/\\bbuy\\b|purchase|owning/.test(content)) intent = 'BUY';\nelse if (/\\brent\\b|lease/.test(content)) intent = 'RENT';\nelse if (/\\bsell\\b/.test(content)) intent = 'SELL';\nelse if (/land|plot/.test(content)) intent = 'LAND';\nelse if (/apartment|house|flat|duplex|property/.test(content)) intent = 'PROPERTY_ENQUIRY';\n\nlet property_type = null;\nif (/apartment|flat/.test(content)) property_type = 'APARTMENT';\nelse if (/duplex/.test(content)) property_type = 'DUPLEX';\nelse if (/house|bungalow/.test(content)) property_type = 'HOUSE';\nelse if (/land|plot/.test(content)) property_type = 'LAND';\n\nlet bedrooms = null;\nconst bedMatch = content.match(/(\\d+)\\s*-?\\s*bed/);\nif (bedMatch) bedrooms = parseInt(bedMatch[1], 10);\n\nlet location = null;\nconst locs = ['lekki', 'ikoyi', 'victoria island', 'vi', 'banana island', 'ajah', 'yaba', 'ikeja', 'surulere'];\nfor (const loc of locs) {\n  if (content.includes(loc)) {\n    location = loc.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');\n    if (loc === 'vi') location = 'Victoria Island';\n    break;\n  }\n}\n\nlet budget_max = null;\nconst moneyMatch = content.match(/(?:₦|ngn|naira)?\\s*([\\d,.]+)\\s*(m|million|k)?/i);\nif (moneyMatch) {\n  let n = parseFloat(moneyMatch[1].replace(/,/g, ''));\n  const unit = (moneyMatch[2] || '').toLowerCase();\n  if (unit === 'm' || unit === 'million') n *= 1_000_000;\n  else if (unit === 'k') n *= 1000;\n  if (n > 1000) budget_max = n;\n}\n\nlet timeline = null;\nif (/immediate|asap|right away|now/.test(content)) timeline = 'IMMEDIATE';\nelse if (/1 month|one month|within a month/.test(content)) timeline = 'WITHIN_1_MONTH';\nelse if (/3 month|three month|within 3/.test(content)) timeline = 'WITHIN_3_MONTHS';\nelse if (/6 month|six month/.test(content)) timeline = 'WITHIN_6_MONTHS';\nelse if (/research|just looking|exploring/.test(content)) timeline = 'RESEARCHING';\n\n// Friendly bot reply\nconst parts = [];\nif (property_type || bedrooms || location) {\n  parts.push('Thanks! I noted');
+  if (bedrooms) parts.push(`a ${bedrooms}-bedroom`);\n  if (property_type) parts.push(property_type.toLowerCase());\n  if (location) parts.push(`in ${location}`);\n  if (budget_max) parts.push(`around ₦${(budget_max / 1_000_000).toFixed(budget_max % 1_000_000 === 0 ? 0 : 1)}M`);\n  parts.push('.');\n} else {\n  parts.push('Thanks for reaching out to PrimeHomes Realty!');\n}\n\nif (!timeline) parts.push(' When are you looking to move or complete this?');\nelse if (!budget_max) parts.push(' What budget range are you working with?');\nelse if (!location) parts.push(' Which area are you most interested in?');\nelse parts.push(' An agent will follow up shortly. Anything else I should know?');\n\nconst botReply = parts.join(' ').replace(/\\s+/g, ' ').trim();\n\nreturn [{\n  json: {\n    lead_id: leadId,\n    conversation_id: conversationId,\n    message_id: messageId,\n    content: body.content,\n    extracted: {\n      intent,\n      property_type,\n      bedrooms,\n      location,\n      budget_max,\n      currency: 'NGN',\n      timeline\n    },\n    bot_reply: botReply\n  }\n}];"
+      },
+      "id": "extract-code",
+      "name": "Extract + Draft Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/v1/internal/leads/{{ $json.lead_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Webhook-Secret",
+              "value": "change-me-n8n-secret"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, ...$json.extracted }) }}",
+        "options": {}
+      },
+      "id": "update-lead",
+      "name": "Update Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/internal/bot-reply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Webhook-Secret",
+              "value": "change-me-n8n-secret"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ conversation_id: $json.conversation_id, message_id: $json.message_id, content: $json.bot_reply }) }}",
+        "options": {}
+      },
+      "id": "save-bot-reply",
+      "name": "Save Bot Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract + Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract + Draft Reply": {
+      "main": [
+        [
+          {
+            "node": "Update Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "1"
+}
