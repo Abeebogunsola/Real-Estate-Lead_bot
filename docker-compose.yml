@@ -8,7 +8,7 @@ services:
       MYSQL_USER: relb
       MYSQL_PASSWORD: relbsecret
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -46,7 +46,7 @@ services:
     image: n8nio/n8n:latest
     container_name: relb-n8n
     ports:
-      - "5678:5678"
+      - "5679:5678"
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
