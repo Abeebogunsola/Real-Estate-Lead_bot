@@ -66,8 +66,8 @@ export default function App() {
           const welcome = prev.find((m) => m.id === 'welcome')
           return welcome ? [welcome, ...msgs] : msgs
         })
-        const hasBot = msgs.some((m) => m.sender_type === 'BOT')
-        if (hasBot) {
+        const lastMsg = msgs[msgs.length - 1]
+        if (lastMsg && lastMsg.sender_type === 'BOT') {
           setProcessing(false)
           stopPolling()
         }

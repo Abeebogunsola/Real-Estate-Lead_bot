@@ -24,6 +24,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: relb-backend
+    env_file:
+      - .env
     environment:
       DATABASE_URL: mysql+pymysql://relb:relbsecret@mysql:3306/real_estate_leads
       N8N_WEBHOOK_URL: http://n8n:5678/webhook/lead-process-message
@@ -46,16 +48,29 @@ services:
     image: n8nio/n8n:latest
     container_name: relb-n8n
     ports:
-      - "5679:5678"
+      - "5678:5678"
+    env_file:
+      - .env
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
       - N8N_BASIC_AUTH_PASSWORD=admin
       - GENERIC_TIMEZONE=Africa/Lagos
+      - N8N_WEBHOOK_URL=http://localhost:5678/
+      - N8N_EDITOR_BASE_URL=http://localhost:5678/
       - WEBHOOK_URL=http://localhost:5678/
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - API_BASE_URL=http://backend:8000
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-openai/gpt-oss-120b}
+      - GROQ_BASE_URL=${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+      - LLM_API_KEY=${GROQ_API_KEY:-}
+      - LLM_MODEL=${GROQ_MODEL:-openai/gpt-oss-120b}
+      - LLM_BASE_URL=${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+      - SALES_NOTIFY_WEBHOOK_URL=${SALES_NOTIFY_WEBHOOK_URL:-}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/home/node/workflows

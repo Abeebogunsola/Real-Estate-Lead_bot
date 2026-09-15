@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     cors_origins: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
-    database_url: str = "mysql+pymysql://relb:relbsecret@localhost:3306/real_estate_leads"
+    database_url: str = "mysql+pymysql://relb:relbsecret@127.0.0.1:3307/real_estate_leads"
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

@@ -12,6 +12,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.schemas.chat import ChatRequest, ChatResponse, MessageOut, LeadOut
 from app.services.n8n_client import trigger_message_processing
+from app.services.qualification import calculate_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -155,3 +156,124 @@ def get_lead(lead_id: str, db: Session = Depends(get_db)):
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     return LeadOut.model_validate(lead)
+
+
+@router.get("/messages/{message_id}", response_model=MessageOut)
+def get_message(message_id: str, db: Session = Depends(get_db)):
+    """Retrieve message by ID for n8n Get Message node."""
+    msg = db.get(Message, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return MessageOut.model_validate(msg)
+
+
+@router.patch("/messages/{message_id}", response_model=MessageOut)
+def update_message_status(message_id: str, body: dict, db: Session = Depends(get_db)):
+    """Update message status (e.g. PROCESSED)."""
+    msg = db.get(Message, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    new_status = body.get("processing_status") or body.get("status")
+    if new_status:
+        msg.status = new_status
+    db.commit()
+    db.refresh(msg)
+    return MessageOut.model_validate(msg)
+
+
+@router.get("/conversations/{conversation_id}")
+def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    """Retrieve conversation details for n8n Get Conversation node."""
+    conv = db.get(Conversation, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {
+        "id": conv.id,
+        "lead_id": conv.lead_id,
+        "channel": conv.channel,
+        "status": conv.status,
+        "created_at": conv.created_at,
+        "updated_at": conv.updated_at,
+    }
+
+
+@router.post("/conversations/{conversation_id}/messages", response_model=MessageOut)
+def add_conversation_message(conversation_id: str, body: dict, db: Session = Depends(get_db)):
+    """Save bot response or customer message into conversation."""
+    conv = db.get(Conversation, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+    sender_type = body.get("sender_type", "BOT")
+    msg = Message(
+        conversation_id=conv.id,
+        sender_type=sender_type,
+        content=content,
+        status="PROCESSED" if sender_type == "BOT" else "RECEIVED",
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return MessageOut.model_validate(msg)
+
+
+@router.patch("/leads/{lead_id}", response_model=LeadOut)
+def update_lead(lead_id: str, body: dict, db: Session = Depends(get_db)):
+    """Update lead fields from n8n and recalculate score deterministically."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    data = body.get("lead_update", body)
+    fields = [
+        "intent", "transaction_type", "property_type", "bedrooms",
+        "location", "budget_min", "budget_max", "currency", "timeline",
+        "name", "email", "phone", "status",
+    ]
+    for field in fields:
+        if field in data and data[field] is not None:
+            setattr(lead, field, data[field])
+
+    score, classification = calculate_score(lead)
+    lead.score = score
+    lead.classification = classification
+    if lead.status == "NEW":
+        lead.status = "QUALIFYING"
+    lead.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(lead)
+    return LeadOut.model_validate(lead)
+
+
+@router.post("/leads/{lead_id}/qualify", response_model=LeadOut)
+def qualify_lead(lead_id: str, db: Session = Depends(get_db)):
+    """Trigger qualification score recalculation for lead."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    score, classification = calculate_score(lead)
+    lead.score = score
+    lead.classification = classification
+    if score >= 30 and lead.status in ("NEW", "QUALIFYING"):
+        lead.status = "QUALIFIED"
+    lead.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(lead)
+    return LeadOut.model_validate(lead)
+
+
+@router.post("/leads/{lead_id}/activities")
+def record_lead_activity(lead_id: str, body: dict, db: Session = Depends(get_db)):
+    """Record activity for lead (used by n8n Record Activity node)."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {
+        "ok": True,
+        "lead_id": lead_id,
+        "actor_type": body.get("actor_type", "SYSTEM"),
+        "activity_type": body.get("activity_type", "MESSAGE_PROCESSED"),
+        "description": body.get("description", "Workflow activity recorded"),
+    }
+
